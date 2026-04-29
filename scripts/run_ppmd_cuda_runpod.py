@@ -599,6 +599,7 @@ def _full_eval_clone_snippet(gpu_sku: str, branch: str, commit: str, positions: 
         # Fetch FineWeb sp8192 val shard + tokenizer directly from HF (curl is more reliable
         # than cached_challenge_fineweb.py's HF xet-client which has been observed to hang
         # for 30+ minutes without auth). All four files are public.
+        apt-get install -y curl >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1 || true
         HFBASE=https://huggingface.co/datasets/kevclark/parameter-golf/resolve/main/datasets
         mkdir -p $REPO/data/datasets/fineweb10B_sp8192 $REPO/data/tokenizers
         echo '[fetch] manifest + tokenizer + sp8192 val shard via curl' \\
