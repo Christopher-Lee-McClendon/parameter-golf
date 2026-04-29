@@ -596,26 +596,37 @@ def _full_eval_clone_snippet(gpu_sku: str, branch: str, commit: str, positions: 
         BUILD_CPP_EC=${{PIPESTATUS[0]}}
         set -e
         cd $REPO
-        # Fetch FineWeb sp8192 val shard + tokenizer directly from HF (curl is more reliable
-        # than cached_challenge_fineweb.py's HF xet-client which has been observed to hang
-        # for 30+ minutes without auth). All four files are public.
-        apt-get install -y curl >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1 || true
+        # Fetch FineWeb sp8192 val shard + tokenizer directly from HF via Python urllib
+        # (curl is not installed in the container, and HF's xet-client backend hangs 30+
+        # min without auth on cached_challenge_fineweb.py). All four files are public.
         HFBASE=https://huggingface.co/datasets/kevclark/parameter-golf/resolve/main/datasets
         mkdir -p $REPO/data/datasets/fineweb10B_sp8192 $REPO/data/tokenizers
-        echo '[fetch] manifest + tokenizer + sp8192 val shard via curl' \\
+        echo '[fetch] manifest + tokenizer + sp8192 val shard via urllib' \\
             >> /root/rehearsal_out/path_a_cuda_full_eval.log
-        curl -fsSL --retry 3 --max-time 300 -o $REPO/data/manifest.json \\
-            "$HFBASE/manifest.json" \\
-            >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
-        curl -fsSL --retry 3 --max-time 300 -o $REPO/data/tokenizers/fineweb_8192_bpe.model \\
-            "$HFBASE/tokenizers/fineweb_8192_bpe.model" \\
-            >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
-        curl -fsSL --retry 3 --max-time 300 -o $REPO/data/tokenizers/fineweb_8192_bpe.vocab \\
-            "$HFBASE/tokenizers/fineweb_8192_bpe.vocab" \\
-            >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
-        curl -fsSL --retry 3 --max-time 600 -o $REPO/data/datasets/fineweb10B_sp8192/fineweb_val_000000.bin \\
-            "$HFBASE/datasets/fineweb10B_sp8192/fineweb_val_000000.bin" \\
-            >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
+        python3 - <<PYEOF >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
+import urllib.request, ssl, time, os
+ctx = ssl.create_default_context()
+HFBASE = "${{HFBASE}}"
+files = [
+    ("manifest.json", f"$REPO/data/manifest.json"),
+    ("tokenizers/fineweb_8192_bpe.model", f"$REPO/data/tokenizers/fineweb_8192_bpe.model"),
+    ("tokenizers/fineweb_8192_bpe.vocab", f"$REPO/data/tokenizers/fineweb_8192_bpe.vocab"),
+    ("datasets/fineweb10B_sp8192/fineweb_val_000000.bin",
+     f"$REPO/data/datasets/fineweb10B_sp8192/fineweb_val_000000.bin"),
+]
+for rel, dest in files:
+    url = f"{{HFBASE}}/{{rel}}"
+    t0 = time.time()
+    req = urllib.request.Request(url, headers={{"User-Agent": "ppmd-cuda-runpod/1.0"}})
+    with urllib.request.urlopen(req, timeout=600, context=ctx) as r, open(dest, "wb") as f:
+        while True:
+            chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+    sz = os.path.getsize(dest)
+    print(f"[fetch] {{rel}} -> {{dest}} ({{sz}} bytes, {{time.time()-t0:.1f}}s)", flush=True)
+PYEOF
         ls -la $REPO/data/manifest.json $REPO/data/tokenizers/ $REPO/data/datasets/fineweb10B_sp8192/ \\
             >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
         # Run full Path A CUDA eval (neural NLL + PPM-D scoring)
