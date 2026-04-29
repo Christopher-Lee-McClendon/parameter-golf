@@ -596,10 +596,27 @@ def _full_eval_clone_snippet(gpu_sku: str, branch: str, commit: str, positions: 
         BUILD_CPP_EC=${{PIPESTATUS[0]}}
         set -e
         cd $REPO
-        # Download FineWeb SP8192 validation split (val shards only — skip 80 training shards)
-        MATCHED_FINEWEB_REPO_ID=kevclark/parameter-golf \\
-            python3 data/cached_challenge_fineweb.py --variant sp8192 --train-shards 0 \\
-            >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1 || true
+        # Fetch FineWeb sp8192 val shard + tokenizer directly from HF (curl is more reliable
+        # than cached_challenge_fineweb.py's HF xet-client which has been observed to hang
+        # for 30+ minutes without auth). All four files are public.
+        HFBASE=https://huggingface.co/datasets/kevclark/parameter-golf/resolve/main/datasets
+        mkdir -p $REPO/data/datasets/fineweb10B_sp8192 $REPO/data/tokenizers
+        echo '[fetch] manifest + tokenizer + sp8192 val shard via curl' \\
+            >> /root/rehearsal_out/path_a_cuda_full_eval.log
+        curl -fsSL --retry 3 --max-time 300 -o $REPO/data/manifest.json \\
+            "$HFBASE/manifest.json" \\
+            >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
+        curl -fsSL --retry 3 --max-time 300 -o $REPO/data/tokenizers/fineweb_8192_bpe.model \\
+            "$HFBASE/tokenizers/fineweb_8192_bpe.model" \\
+            >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
+        curl -fsSL --retry 3 --max-time 300 -o $REPO/data/tokenizers/fineweb_8192_bpe.vocab \\
+            "$HFBASE/tokenizers/fineweb_8192_bpe.vocab" \\
+            >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
+        curl -fsSL --retry 3 --max-time 600 -o $REPO/data/datasets/fineweb10B_sp8192/fineweb_val_000000.bin \\
+            "$HFBASE/datasets/fineweb10B_sp8192/fineweb_val_000000.bin" \\
+            >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
+        ls -la $REPO/data/manifest.json $REPO/data/tokenizers/ $REPO/data/datasets/fineweb10B_sp8192/ \\
+            >> /root/rehearsal_out/path_a_cuda_full_eval.log 2>&1
         # Run full Path A CUDA eval (neural NLL + PPM-D scoring)
         cd $REPO/scripts
         PYTHONPATH=$REPO/scripts/ppmd_cpp:$REPO/scripts:$REPO \\
